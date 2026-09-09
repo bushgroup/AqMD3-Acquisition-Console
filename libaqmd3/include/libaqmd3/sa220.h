@@ -52,7 +52,7 @@ private:
 
 		std::string model(256, (char)0);
 		Digitizer::get_instrument_model(model);
-		serial_num.resize(strlen(model.c_str()));
+		model.resize(strlen(model.c_str()));
 
 		return Info{ model, firmware_rev, serial_num };
 	}
