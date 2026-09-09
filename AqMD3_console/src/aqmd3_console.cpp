@@ -31,6 +31,7 @@
 #include <string>
 #include <map>
 #include <cctype>
+#include <chrono>
 #include <optional>
 using std::cerr;
 #include <windows.h>
@@ -79,6 +80,69 @@ uint64_t acquisition_max_buffer_count = 100;
 uint64_t acquisition_buffer_reserve_elements_count = 2048;
 std::string log_level = "info";
 
+// Settings that were literals in the source until this fork. Every default below is the value
+// upstream compiled in, so a config.txt that names none of them changes nothing.
+static double trigger_level = 2.0;                  // volts, at the External1 input
+static bool trigger_rising = true;                  // false selects the falling edge
+static double full_scale_range = 0.5;               // volts peak to peak, channel 1
+static int zero_suppress_threshold = -32667;        // ADC codes, must fit int16_t
+static int zero_suppress_hysteresis = 100;          // ADC codes, must fit uint16_t
+static int control_io_port = 2;                     // 1, 2 or 3; the port carrying In-TriggerEnable
+
+//  std::stod and std::stoi say "invalid stod argument" and nothing about which line of
+//  config.txt is wrong. These say.
+static double config_double(const Config &config, const std::string &key, double fallback)
+{
+	if (!config.has_key(key))
+		return fallback;
+
+	try {
+		return std::stod(config.get_value(key));
+	} catch (const std::exception &) {
+		throw std::runtime_error(key + " must be a number, got \"" + config.get_value(key) + "\"");
+	}
+}
+
+static int config_int(const Config &config, const std::string &key, int fallback)
+{
+	if (!config.has_key(key))
+		return fallback;
+
+	try {
+		return std::stoi(config.get_value(key));
+	} catch (const std::exception &) {
+		throw std::runtime_error(key + " must be a whole number, got \"" + config.get_value(key) + "\"");
+	}
+}
+
+static std::string control_io_port_name()
+{
+	switch (control_io_port)
+	{
+	case 1: return SA220::control_io_1;
+	case 3: return SA220::control_io_3;
+	default: return SA220::control_io_2;
+	}
+}
+
+//  A value this console can name as wrong is refused here rather than passed to the driver.
+//  Trigger level and full scale are not among them: the card's own list of ranges has not been
+//  read yet, so the driver is left to refuse what it will not accept.
+static void reject_bad_settings()
+{
+	if (zero_suppress_threshold < -32768 || zero_suppress_threshold > 32767)
+		throw std::runtime_error("ZeroSuppressThreshold must be between -32768 and 32767, got "
+			+ std::to_string(zero_suppress_threshold));
+
+	if (zero_suppress_hysteresis < 0 || zero_suppress_hysteresis > 65535)
+		throw std::runtime_error("ZeroSuppressHysteresis must be between 0 and 65535, got "
+			+ std::to_string(zero_suppress_hysteresis));
+
+	if (control_io_port < 1 || control_io_port > 3)
+		throw std::runtime_error("ControlIoPort must be 1, 2 or 3, got "
+			+ std::to_string(control_io_port));
+}
+
 
 static void print_config_value(const std::string& key, const std::string &value, bool is_found) {
 	std::string msg = "Config value \"" + key;
@@ -108,6 +172,12 @@ void configure_logger(spdlog::level::level_enum log_level)
 		logger->set_level(log_level);
 		spdlog::set_default_logger(logger);
 
+		//  The console has no quit command: server->run() loops until the process is killed, and
+		//  a killed process never runs spdlog's sink destructors. Without these two lines the log
+		//  file is empty after every ordinary shutdown.
+		logger->flush_on(spdlog::level::info);
+		spdlog::flush_every(std::chrono::seconds(1));
+
 		spdlog::info("Logger initialized");
 	}
 	catch (const spdlog::spdlog_ex& ex)
@@ -136,6 +206,29 @@ std::optional<Config> configure_settings()
 		acquisition_buffer_reserve_elements_count = config.has_key("AcquisitionBufferReserveElementsCount") ? std::stoull(config.get_value("AcquisitionBufferReserveElementsCount")) : acquisition_buffer_reserve_elements_count;
 		log_level = config.has_key("LogLevel") ? config.get_value("LogLevel") : log_level;
 
+		trigger_level = config_double(config, "TriggerLevel", trigger_level);
+		full_scale_range = config_double(config, "FullScaleRange", full_scale_range);
+		zero_suppress_threshold = config_int(config, "ZeroSuppressThreshold", zero_suppress_threshold);
+		zero_suppress_hysteresis = config_int(config, "ZeroSuppressHysteresis", zero_suppress_hysteresis);
+		control_io_port = config_int(config, "ControlIoPort", control_io_port);
+
+		if (config.has_key("TriggerSlope"))
+		{
+			std::string slope = config.get_value("TriggerSlope");
+			slope.erase(slope.find_last_not_of(" \t\r\n") + 1);
+			for (auto &c : slope)
+				c = (char)std::tolower(c);
+
+			if (slope == "rising")
+				trigger_rising = true;
+			else if (slope == "falling")
+				trigger_rising = false;
+			else
+				throw std::runtime_error("TriggerSlope must be rising or falling, got " + slope);
+		}
+
+		reject_bad_settings();
+
 		return_config = config;
 	}
 
@@ -152,6 +245,12 @@ void print_config(Config& config)
 	print_config_value("AcquisitionInitialBufferCount", std::to_string(acquisition_initial_buffer_count), config.has_key("AcquisitionInitialBufferCount"));
 	print_config_value("AcquisitionMaxBufferCount", std::to_string(acquisition_max_buffer_count), config.has_key("AcquisitionMaxBufferCount"));
 	print_config_value("AcquisitionBufferReserveElementsCount", std::to_string(acquisition_buffer_reserve_elements_count), config.has_key("AcquisitionBufferReserveElementsCount"));
+	print_config_value("TriggerLevel", std::to_string(trigger_level), config.has_key("TriggerLevel"));
+	print_config_value("TriggerSlope", trigger_rising ? "rising" : "falling", config.has_key("TriggerSlope"));
+	print_config_value("FullScaleRange", std::to_string(full_scale_range), config.has_key("FullScaleRange"));
+	print_config_value("ZeroSuppressThreshold", std::to_string(zero_suppress_threshold), config.has_key("ZeroSuppressThreshold"));
+	print_config_value("ZeroSuppressHysteresis", std::to_string(zero_suppress_hysteresis), config.has_key("ZeroSuppressHysteresis"));
+	print_config_value("ControlIoPort", std::to_string(control_io_port), config.has_key("ControlIoPort"));
 }
 
 std::map<std::string, spdlog::level::level_enum> get_log_levels_map()
@@ -193,7 +292,22 @@ int main(int argc, char *argv[]) {
 	{
 		// Disable 'Quick Edit Mode' since it can cause the application to hang during acquisition
 		disable_quick_edit();
-		auto config = configure_settings();
+
+		std::optional<Config> config;
+		try
+		{
+			config = configure_settings();
+		}
+		catch (const std::exception &ex)
+		{
+			//  configure_settings runs before the logger, since the log level is one of the
+			//  things it reads. Give the complaint a log file to land in before repeating it.
+			configure_logger(spdlog::level::level_enum::info);
+			spdlog::critical("config.txt is not usable, application exiting");
+			spdlog::critical(ex.what());
+			return 1;
+		}
+
 		if (!config)
 		{
 			configure_logger(spdlog::level::level_enum::info);
@@ -250,13 +364,15 @@ int main(int argc, char *argv[]) {
 					if (command == "info")
 					{
 						auto info = digitizer->get_info();
-						auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Digitizer Firmware Version: {} / App: {} / App Version: {}-{}",
+						auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Digitizer Firmware Version: {} / App: {} / App Version: {}-{} / Fork: {}@{}",
 							info.instrument_model,
 							info.serial_number,
 							info.firmware_revision,
 							PROJECT_NAME_S,
 							AqMD3_console_VERSION_S,
-							GIT_COMMIT_HASH);
+							GIT_COMMIT_HASH,
+							FORK_S,
+							GIT_BRANCH);
 						req.send_response(info_str);
 					}
 
@@ -274,7 +390,7 @@ int main(int argc, char *argv[]) {
 
 					if (command == "init")
 					{
-						digitizer->set_trigger_parameters(digitizer->trigger_external, 2.0, true, post_trigger_delay);
+						digitizer->set_trigger_parameters(digitizer->trigger_external, trigger_level, trigger_rising, post_trigger_delay);
 
 						req.send_response(ack);
 						continue;
@@ -298,7 +414,7 @@ int main(int argc, char *argv[]) {
 						if (req.payload.size() == 2)
 						{
 							auto offset_v = std::stod(req.payload[1]);
-							digitizer->set_channel_parameters(digitizer->channel_1, digitizer->full_scale_range_0_5v, offset_v);
+							digitizer->set_channel_parameters(digitizer->channel_1, full_scale_range, offset_v);
 						}
 
 						req.send_response(ack);
@@ -407,7 +523,8 @@ int main(int argc, char *argv[]) {
 #if TEST_ACQUIRE
 						context = std::make_shared<DataGeneratorContext>(dynamic_cast<const Digitizer&>(*digitizer), digitizer->channel_1, notify_on_scans_count, buffer_pool);
 #else
-						context = digitizer->configure_cst(digitizer->channel_1, buffer_pool, Digitizer::ZeroSuppressParameters(-32667, 100));
+						context = digitizer->configure_cst(digitizer->channel_1, buffer_pool,
+							Digitizer::ZeroSuppressParameters((int16_t)zero_suppress_threshold, (uint16_t)zero_suppress_hysteresis));
 #endif
 
 						std::unique_ptr<AcquirePublisher> p = std::make_unique<AcquirePublisher>(context, acquisition_timeout_ms, buffer_pool, notify_on_scans_count, data_pub);
@@ -523,7 +640,7 @@ int main(int argc, char *argv[]) {
 						if (req.payload.size() == 2)
 						{
 							auto val = std::stoi(req.payload[1]);
-							digitizer->enable_io_port(SA220::control_io_2);
+							digitizer->enable_io_port(control_io_port_name());
 						}
 
 						req.send_response(ack);
@@ -535,7 +652,7 @@ int main(int argc, char *argv[]) {
 						if (req.payload.size() == 2)
 						{
 							auto val = std::stoi(req.payload[1]);
-							digitizer->disable_io_port(SA220::control_io_2);
+							digitizer->disable_io_port(control_io_port_name());
 						}
 
 						req.send_response(ack);

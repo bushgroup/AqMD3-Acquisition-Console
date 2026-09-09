@@ -5,3 +5,4 @@
 #define PROJECT_NAME_S "@PROJECT_NAME@"
 #define GIT_COMMIT_HASH "@GIT_COMMIT_HASH@"
 #define GIT_BRANCH "@GIT_BRANCH@"
+#define FORK_S "@AqMD3_console_FORK@"
