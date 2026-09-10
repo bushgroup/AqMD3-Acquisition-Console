@@ -10,6 +10,31 @@
 #define FREE_ON_BUFFER_COUNT 5
 #define WARN_ON_BUFFER_COUNT 3
 
+namespace
+{
+	// A status message is one line by convention, and a driver error is not: the AqMD3 messages
+	// carry an error code and an explanation on separate lines.
+	std::string one_line(const std::string& text)
+	{
+		std::string out(text);
+		for (auto& character : out)
+		{
+			if (character == '\r' || character == '\n' || character == '\t')
+			{
+				character = ' ';
+			}
+		}
+		return out;
+	}
+}
+
+void AcquirePublisher::publish_status(const std::string& text, std::chrono::milliseconds timeout)
+{
+	zmq::message_t message(text.size());
+	memcpy((void *)message.data(), text.c_str(), text.size());
+	publisher->send(message, subject, timeout);
+}
+
 void AcquirePublisher::start(UimfFrameParameters parameters)
 {
 	try
@@ -65,11 +90,18 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 						catch (const std::exception& ex)
 						{
 							spdlog::error("Error when acquiring UIMF data: " + std::string(ex.what()));
+							// Logged is not the same as reported. Without this a client sees a frame that ended
+							// with fewer scans than it asked for, or none at all, and cannot tell that from a
+							// frame in which nothing was above the threshold. The timeout is short and finite so
+							// that a blocked publisher can never hold up the "finished" that follows.
+							publish_status("error " + one_line(ex.what()), std::chrono::milliseconds(1000));
 							has_errored = true;
 						}
 						catch (...)
 						{
 							spdlog::error("Unknown error when acquiring UIMF data");
+							publish_status("error unknown error when acquiring UIMF data",
+								std::chrono::milliseconds(1000));
 							has_errored = true;
 						}
 					}
@@ -80,10 +112,7 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 				digitizer->stop();
 				spdlog::info(std::format("Scans acquired: {}", scans_acquired_count));
 
-				std::string finished = "finished";
-				zmq::message_t finished_msg(finished.size());
-				memcpy((void *)finished_msg.data(), finished.c_str(), finished.size());
-				publisher->send(finished_msg, subject, std::chrono::milliseconds::max());
+				publish_status("finished", std::chrono::milliseconds::max());
 
 				return;
 			});
@@ -93,10 +122,13 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 	catch (const std::exception& ex)
 	{
 		spdlog::error("Error processing UIMF request: " + std::string(ex.what()));
+		publish_status("error " + one_line(ex.what()), std::chrono::milliseconds(1000));
 	}
 	catch (...)
 	{
 		spdlog::error("Unknown error when processing UIMF request");
+		publish_status("error unknown error when processing UIMF request",
+			std::chrono::milliseconds(1000));
 	}
 }
 
@@ -115,10 +147,7 @@ void AcquirePublisher::stop(bool terminate_acquisition_chain)
 		{
 			//Should invalidate this class and make it so it can't be used again
 			notify_completed_and_wait();
-			std::string finished = "finished acquire";
-			zmq::message_t finished_msg(finished.size());
-			memcpy((void*)finished_msg.data(), finished.c_str(), finished.size());
-			publisher->send(finished_msg, subject, std::chrono::seconds(30));
+			publish_status("finished acquire", std::chrono::milliseconds(30000));
 		}
 
 		if (worker_handle && worker_handle->joinable()) {

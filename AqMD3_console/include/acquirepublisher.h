@@ -9,6 +9,8 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <chrono>
+#include <string>
 
 class AcquirePublisher : public AcquisitionControl, public Publisher<UimfAcquisitionRecord> {
 private:
@@ -38,6 +40,10 @@ public:
 	virtual ~AcquirePublisher() = default;
 
 	void start(UimfFrameParameters parameters);
+
+	// One plain string on the status topic, which is how "finished", "finished acquire" and now
+	// "error <what>" all reach a client.
+	void publish_status(const std::string& text, std::chrono::milliseconds timeout);
 	//void start() override;
 	void stop(bool terminate_acquisition_chain) override;
 
