@@ -5,6 +5,9 @@
 
 class CstContext : public StreamingContext {
 private:
+	// One marker is 16 int32 elements, the same hunk CstZs1Context walks. Named here
+	// because this path now has to skip hunks rather than assume every one is a trigger.
+	static const int64_t markers_hunk_size = 16;
 
 public:
 	CstContext(const Digitizer& digitizer, std::string channel, std::shared_ptr<AcquisitionBufferPool> buffer_pool)
