@@ -3,6 +3,7 @@
 #include "../include/libaqmd3/digitizer.h"
 #include "../include/libaqmd3/helpers.h"
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -14,7 +15,12 @@ AcquiredData CstContext::acquire(uint64_t triggers_to_read, std::chrono::millise
 	auto triggers_per_read = triggers_to_read;
 	auto samples_per_trigger = samples_buffer->get_samples_per_trigger();
 	auto markers_to_acquire = ViInt64(triggers_per_read * markers_hunk_size);
-	std::vector<int32_t> markers_buffer(size_t(markers_to_acquire) * 16);
+	// The largest request the buffer can take, and the buffer with the slack the driver
+	// wants on top of it: it returns a first-valid-element index into the buffer given,
+	// so the space has to be the request plus room for that offset. CstZs1Context sizes
+	// its own markers buffer the same way, its request times its largest multiplier plus 15.
+	const ViInt64 markers_request_max = markers_to_acquire * markers_multiplier_max;
+	std::vector<int32_t> markers_buffer(size_t(markers_request_max) + 15);
 
 	ViInt64 first_element_markers = 0;
 	ViInt64 available_elements_markers = 0;
@@ -48,10 +54,24 @@ AcquiredData CstContext::acquire(uint64_t triggers_to_read, std::chrono::millise
 	// ago.
 	while (stamps.size() < triggers_per_read)
 	{
-		check_fetch_alignment(markers_channel, markers_to_acquire);
+		// Ask for more when there is more waiting. A backlog means the stream holds markers
+		// from before this measurement, and walking one hunk-request at a time is bound by
+		// the driver's per-call latency rather than by the data: after a four-second
+		// acquisition at full occupancy, walking 4368 gate hunks at 20 hunks a fetch took
+		// more than the whole measurement's budget and the measurement was refused for it.
+		// Same idea as CstZs1Context's multiplier, without the state: what to ask for next
+		// is what the driver just said is there.
+		ViInt64 request = markers_to_acquire;
+		if (available_elements_markers > request)
+		{
+			request = std::min(available_elements_markers, markers_request_max);
+			request -= request % markers_hunk_size;
+		}
+
+		check_fetch_alignment(markers_channel, request);
 		auto rc = digitizer.stream_fetch_data(
 			markers_channel.c_str(),
-			markers_to_acquire,
+			request,
 			ViInt64(markers_buffer.size()),
 			(ViInt32 *)markers_buffer.data(),
 			&available_elements_markers, &actual_elements_markers, &first_element_markers);

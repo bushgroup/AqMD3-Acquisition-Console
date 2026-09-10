@@ -9,6 +9,11 @@ private:
 	// because this path now has to skip hunks rather than assume every one is a trigger.
 	static const int64_t markers_hunk_size = 16;
 
+	// How many times the base request one fetch may grow to when the stream has a backlog.
+	// CstZs1Context's equivalent is 8; this path walks past markers rather than using them,
+	// so it wants a longer stride, and its buffer is sized for the largest request.
+	static const int64_t markers_multiplier_max = 16;
+
 public:
 	CstContext(const Digitizer& digitizer, std::string channel, std::shared_ptr<AcquisitionBufferPool> buffer_pool)
 		: StreamingContext(digitizer, channel, buffer_pool)
