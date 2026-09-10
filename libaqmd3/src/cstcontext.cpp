@@ -1,6 +1,7 @@
 #include "../include/libaqmd3/cstcontext.h"
 #include "../include/libaqmd3/acquisitionbuffer.h"
 #include "../include/libaqmd3/digitizer.h"
+#include "../include/libaqmd3/helpers.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -17,6 +18,10 @@ AcquiredData CstContext::acquire(uint64_t triggers_to_read, std::chrono::millise
 	ViInt64 available_elements_markers = 0;
 	ViInt64 actual_elements_markers = 0;
 
+	// This path has no multiplier, so its two counts never drift: each retry asks for the same
+	// number again. Both are asserted anyway, because the samples count is derived from a record
+	// size and is a multiple of 16 only while that record size is a multiple of 32.
+	check_fetch_alignment(markers_channel, markers_to_acquire);
 	do
 	{
 		auto rc = digitizer.stream_fetch_data(
@@ -57,7 +62,8 @@ AcquiredData CstContext::acquire(uint64_t triggers_to_read, std::chrono::millise
 	ViInt64 available_elements_samples = 0;
 
 	int elements_to_acquire = (triggers_per_read * samples_per_trigger) / 2;
-	
+	check_fetch_alignment(samples_channel, elements_to_acquire);
+
 	do
 	{
 		auto rc = digitizer.stream_fetch_data(

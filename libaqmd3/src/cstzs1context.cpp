@@ -1,5 +1,6 @@
 #include "../include/libaqmd3/cstzs1context.h"
 #include "../include/libaqmd3/digitizer.h"
+#include "../include/libaqmd3/helpers.h"
 
 #include <vector>
 #include <tuple>
@@ -158,6 +159,7 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 			{
 				markers_to_acquire = next_markers_to_acquire;
 
+				check_fetch_alignment(markers_channel, markers_to_acquire);
 				auto rc = digitizer.stream_fetch_data(
 						markers_channel.c_str(),
 						markers_to_acquire,
@@ -188,7 +190,16 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 #ifdef variable_m_t_a
 			if (available_elements_markers > markers_to_acquire && active_multiplier < multiplier_max)
 			{
-				markers_to_acquire = triggers_to_read * ++active_multiplier;
+				// One marker hunk is markers_hunk_size elements, so the count this asks for is a number
+				// of hunks and not a number of triggers. Leaving markers_hunk_size out asked for 1000
+				// elements where 16000 was meant, at 500 triggers and a multiplier of 2, and 1000 is not
+				// a multiple of 16: the driver refused the fetch, the acquisition thread caught it and
+				// gave up, and the frame ended early with no error anywhere but the log. It only shows
+				// once a markers backlog larger than one request has built up, which needs the gate
+				// traffic of a record that is actually being suppressed. markers_buffer is sized
+				// max_triggers_per_read * markers_hunk_size * multiplier_max, which is this count at the
+				// largest multiplier, so the buffer was always sized for what this line was meant to say.
+				markers_to_acquire = int(triggers_to_read * markers_hunk_size * ++active_multiplier);
 			}
 #endif
 
@@ -202,16 +213,20 @@ process:
 	ViInt64 actual_elements_samples = 0;
 	ViInt64 available_elements_samples = 0;
 
-	do
-	{
-		if (to_acquire == 0)
-			break;
+	// actual_elements_samples is an out-parameter that each fetch overwrites, so subtracting it
+	// from to_acquire is only the outstanding count while no fetch has yet come back short. Keep
+	// the running total, and pass the space that is actually left in the buffer rather than its
+	// whole size, since the pointer handed over has already advanced into it.
+	uint64_t fetched_elements_samples = 0;
 
-		int actual_acquire = to_acquire - actual_elements_samples;
+	while (fetched_elements_samples < to_acquire)
+	{
+		ViInt64 outstanding = ViInt64(to_acquire - fetched_elements_samples);
+		check_fetch_alignment(samples_channel, outstanding);
 		auto rc = digitizer.stream_fetch_data(
 				samples_channel.c_str(),
-				actual_acquire,
-				samples_buffer->get_size(),
+				outstanding,
+				samples_buffer->get_available(),
 				(ViInt32 *)samples_buffer->get_raw_unaquired(),
 				&available_elements_samples, &actual_elements_samples, &first_element_samples);
 		if (rc.second == Digitizer::Error)
@@ -221,7 +236,8 @@ process:
 
 		samples_buffer->advance_offset(first_element_samples);
 		samples_buffer->advance_acquired(actual_elements_samples);
-	} while (samples_buffer->get_acquired() < to_acquire);
+		fetched_elements_samples += uint64_t(actual_elements_samples);
+	}
 
 	return AcquiredData(stamps, samples_buffer, samples_buffer->get_samples_per_trigger());
 
