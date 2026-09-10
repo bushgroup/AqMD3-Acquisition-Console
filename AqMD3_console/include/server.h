@@ -79,6 +79,12 @@ private:
 
 	std::function<void(ReceivedRequest)> message_handler;
 
+	// Whether the handler for the request now in hand has already answered it. run() clears
+	// it before each call and reads it if the handler throws, so that the error reply it
+	// sends can never be a second reply to a request that was already answered. The command
+	// socket is served by one thread, which is what makes a single flag enough.
+	bool responded_to_request = false;
+
 	std::tuple<std::string, std::vector<std::string>> receive();
 	void respond(const std::string& client, const std::string& response);
 	void respond_more(const std::string& client, const std::vector<std::string>& responses);
