@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <spdlog/spdlog.h>
+
 
 namespace AqirisDigitizer
 {
@@ -43,13 +45,43 @@ namespace AqirisDigitizer
         digitizer->set_record_size(record_size);
         auto dig_context = digitizer->configure_cst(digitizer->channel_1, std::make_shared<AcquisitionBufferPool>(triggers, record_size, 10, 10));
 
-        dig_context->start();
-        // Half a second rather than 80 ms. The fetch loop this calls now honours its timeout
-        // instead of spinning forever, and it may have to walk past the markers an earlier
-        // acquisition left in the stream to find twenty triggers, which at full occupancy is
-        // about seventeen hunks per trigger.
-        AcquiredData result = dig_context->acquire(triggers, std::chrono::milliseconds(500));
-        dig_context->stop();
+        // The context is stopped however this leaves, and that is not tidiness.
+        //
+        // Upstream could not fail here: acquire() had no time bound, so it either returned or
+        // never came back. Now that it can throw, an exception on the way out would leave the
+        // digitizer initiated, and everything afterwards fails at apply_setup with
+        //
+        //     Error Code: -1074118653  Error Message: Acquisition running
+        //
+        // for as long as the process lives. Measured: one measurement that timed out wedged
+        // the console for every command that followed it, which is exactly the failure this
+        // task exists to end, arrived at from the other side.
+        struct StopOnLeaving
+        {
+            std::shared_ptr<StreamingContext> context;
+            ~StopOnLeaving() { try { context->stop(); } catch (...) {} }
+        } stopper{dig_context};
+
+        // One retry, because the first attempt may be reading past what an earlier
+        // acquisition left in the stream and the abort and restart in between is the only
+        // thing here that can shorten that. A second timeout is a real failure and is
+        // reported as one.
+        AcquiredData result = [&]
+        {
+            dig_context->start();
+            try
+            {
+                return dig_context->acquire(triggers, measurement_timeout);
+            }
+            catch (const std::exception& first)
+            {
+                spdlog::warn("measuring the pusher period: {}. Restarting the streaming "
+                    "context and trying once more.", first.what());
+                dig_context->stop();
+                dig_context->start();
+                return dig_context->acquire(triggers, measurement_timeout);
+            }
+        }();
 
         if (result.stamps.size() < 2)
         {

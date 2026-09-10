@@ -1,5 +1,6 @@
 #pragma once
 #include <libaqmd3/sa220.h>
+#include <chrono>
 #include <iostream>
 #include <tuple>
 
@@ -23,6 +24,12 @@ namespace AqirisDigitizer
             // excludes no plausible instrument and admits none of the observed garbage.
             static constexpr double min_pusher_period_seconds = 1e-6;
             static constexpr double max_pusher_period_seconds = 0.1;
+
+            // How long one attempt at the measurement may take. Upstream passed 80 ms into a
+            // fetch loop that ignored it entirely; this one honours it, and it may have to
+            // walk past the markers an earlier acquisition left in the stream before it
+            // reaches twenty triggers of its own.
+            static constexpr std::chrono::milliseconds measurement_timeout{1000};
 
             TofTimingInformation(uint64_t samples_per_trigger, uint64_t record_size, uint64_t post_trigger_delay_samples, uint64_t trigger_rearm_samples,
                 double post_trigger_delay_seconds,
