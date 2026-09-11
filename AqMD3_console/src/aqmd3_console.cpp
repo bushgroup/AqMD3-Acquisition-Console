@@ -126,17 +126,30 @@ static std::string control_io_port_name()
 }
 
 //  A value this console can name as wrong is refused here rather than passed to the driver.
-//  Trigger level and full scale are not among them: the card's own list of ranges has not been
-//  read yet, so the driver is left to refuse what it will not accept.
+//  The hysteresis bound and the full-scale pair are the SA220P's own documented limits: the
+//  card offers exactly two full-scale ranges, and it accepts a hysteresis only in [100, 1023]
+//  (lab record, task 18). Trigger level is still passed through, since the level a card
+//  accepts depends on how its input is terminated and the driver refuses what it will not take.
+//
+//  The threshold is checked against the signed 16-bit range and not against the card's own,
+//  [hysteresis - 32768, +32767], which moves with the hysteresis: the console's -32667 sits one
+//  code above the minimum at a hysteresis of 100 and is out of range at a hysteresis of 1023.
 static void reject_bad_settings()
 {
 	if (zero_suppress_threshold < -32768 || zero_suppress_threshold > 32767)
 		throw std::runtime_error("ZeroSuppressThreshold must be between -32768 and 32767, got "
 			+ std::to_string(zero_suppress_threshold));
 
-	if (zero_suppress_hysteresis < 0 || zero_suppress_hysteresis > 65535)
-		throw std::runtime_error("ZeroSuppressHysteresis must be between 0 and 65535, got "
+	if (zero_suppress_hysteresis < 100 || zero_suppress_hysteresis > 1023)
+		throw std::runtime_error("ZeroSuppressHysteresis must be between 100 and 1023, got "
 			+ std::to_string(zero_suppress_hysteresis));
+
+	//  Two values and not a range, so an exact comparison is the check. Both are exactly
+	//  representable, and `config_double` parses the file's text with `std::stod`, so a
+	//  config saying 0.5, 0.50 or 5e-1 all arrive here as the same double.
+	if (full_scale_range != 0.5 && full_scale_range != 2.5)
+		throw std::runtime_error("FullScaleRange must be 0.5 or 2.5, got "
+			+ std::to_string(full_scale_range));
 
 	if (control_io_port < 1 || control_io_port > 3)
 		throw std::runtime_error("ControlIoPort must be 1, 2 or 3, got "
@@ -364,7 +377,7 @@ int main(int argc, char *argv[]) {
 					if (command == "info")
 					{
 						auto info = digitizer->get_info();
-						auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Digitizer Firmware Version: {} / App: {} / App Version: {}-{} / Fork: {}@{}",
+auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Digitizer Firmware Version: {} / App: {} / App Version: {}-{} / Fork: {}@{}",
 							info.instrument_model,
 							info.serial_number,
 							info.firmware_revision,
