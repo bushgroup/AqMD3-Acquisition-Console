@@ -12,7 +12,9 @@ public:
 	int32_t const scan;
 	int64_t const tic;
 	int64_t const bpi;
-	double const bpi_mz;
+	//  The bin the base peak was found in. The `BPI_MZ` column the writer puts it under
+	//  wants an m/z, and only the writer holds the file the calibration is in, so the
+	//  conversion happens there and this stays a bin index.
 	int32_t const index_max_intensity;
 
 	struct CompressedSpectra {
@@ -30,13 +32,12 @@ public:
 	};
 
 public:
-	EncodedResult(int32_t scan, int32_t non_zero_count, std::vector<int32_t> encoded_spectra, int64_t tic, int64_t bpi, double bpi_mz, int32_t index_max_intensity, uint64_t timestamp)
+	EncodedResult(int32_t scan, int32_t non_zero_count, std::vector<int32_t> encoded_spectra, int64_t tic, int64_t bpi, int32_t index_max_intensity, uint64_t timestamp)
 	: encoded_spectra(std::move(encoded_spectra))
 		, scan(scan)
 		, non_zero_count(non_zero_count)
 		, tic(tic)
 		, bpi(bpi)
-		, bpi_mz(bpi_mz)
 		, index_max_intensity(index_max_intensity)
 		, timestamp(timestamp)
 	{}

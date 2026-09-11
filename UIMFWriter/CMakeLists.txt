@@ -5,6 +5,7 @@
 project (UIMFWriter)
 
 find_package(SQLiteCpp CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 
 add_library (UIMFWriter 
 src/uimfwriter.cpp
@@ -21,7 +22,7 @@ include/lzf/lzfP.h
  "include/UIMFWriter/uimfframeparameters.h")
 add_library(i::uimf ALIAS UIMFWriter)
     
-target_link_libraries(UIMFWriter PRIVATE SQLiteCpp)
+target_link_libraries(UIMFWriter PRIVATE SQLiteCpp spdlog::spdlog spdlog::spdlog_header_only)
 
 target_include_directories ( UIMFWriter
 	PUBLIC ${PROJECT_SOURCE_DIR}/include

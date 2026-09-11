@@ -1,5 +1,6 @@
 #include "UIMFWriter/UIMFWriter.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <spdlog/spdlog.h>
 #include <iostream>
 #include <fstream>
 
@@ -9,6 +10,62 @@ UimfWriter::UimfWriter(std::string file)
 	: db(file, SQLite::OPEN_READWRITE)
 {}
 
+//  `BPI_MZ` is defined as an m/z and upstream stores a bin index in it, which makes a raw
+//  file disagree with every other UIMF writer and with the summed companion the client folds
+//  beside it (lab record, task 24). The calibration is in the file this writer already holds
+//  open: the frame's own `CalibrationSlope` and `CalibrationIntercept`, and the global
+//  `BinWidth`. A frame that states no calibration keeps the bin index, since a bin index is
+//  what a file with no mass axis has to offer.
+const UimfCalibration& UimfWriter::calibration_for(uint32_t frame_number)
+{
+	if (calibration_read)
+		return calibration;
+
+	calibration_read = true;
+
+	try
+	{
+		SQLite::Statement frame_params(db,
+			"SELECT ParamID, ParamValue FROM " + frames_table_name
+			+ " WHERE FrameNum = ? AND ParamID IN (?, ?)");
+		frame_params.bind(1, (int)frame_number);
+		frame_params.bind(2, (int)CalibrationParamKeyType::CalibrationSlope);
+		frame_params.bind(3, (int)CalibrationParamKeyType::CalibrationIntercept);
+
+		while (frame_params.executeStep())
+		{
+			int const id = frame_params.getColumn(0).getInt();
+			double const value = frame_params.getColumn(1).getDouble();
+			if (id == CalibrationParamKeyType::CalibrationSlope)
+				calibration.slope = value;
+			else
+				calibration.intercept = value;
+		}
+
+		SQLite::Statement bin_width(db,
+			"SELECT ParamValue FROM Global_Params WHERE ParamID = ?");
+		bin_width.bind(1, (int)GlobalParamKeyType::BinWidth);
+		if (bin_width.executeStep())
+			calibration.bin_width_ns = bin_width.getColumn(0).getDouble();
+	}
+	catch (SQLite::Exception& ex)
+	{
+		//  A file whose parameters cannot be read is still a file worth writing scans to.
+		spdlog::warn("Could not read the calibration of frame " + std::to_string(frame_number)
+			+ ", storing bin indices in BPI_MZ: " + std::string(ex.what()));
+		calibration = UimfCalibration();
+		return calibration;
+	}
+
+	calibration.usable = calibration.slope > 0.0 && calibration.bin_width_ns > 0.0;
+
+	if (!calibration.usable)
+		spdlog::info("Frame " + std::to_string(frame_number)
+			+ " states no usable calibration, storing bin indices in BPI_MZ");
+
+	return calibration;
+}
+
 int UimfWriter::write_scan_data(const UimfFrame& frame)
 {
 	int bytes = 0;
@@ -16,6 +73,8 @@ int UimfWriter::write_scan_data(const UimfFrame& frame)
 	int insert_scan_statement_size_bytes = 110;
 
 	const std::lock_guard<std::mutex> lock(sync);
+
+	auto const& calibration = calibration_for(frame.parameters().frame_number);
 
 	int const extra = 128;
 
@@ -39,7 +98,8 @@ int UimfWriter::write_scan_data(const UimfFrame& frame)
 				er.scan - frame.parameters().start_trigger,
 				er.non_zero_count,
 				er.bpi,
-				er.bpi_mz,
+				calibration.usable ? calibration.mz(er.index_max_intensity)
+				                   : double(er.index_max_intensity),
 				er.tic);
 
 			auto compressed = er.get_compressed_spectra();

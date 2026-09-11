@@ -22,7 +22,6 @@ std::vector<EncodedResult> UimfAcquisitionRecord::process() const
 
 		uint64_t tic = 0;
 		int64_t bpi = 0;
-		double bpi_mz = 0.0;
 		int32_t index_max_intensity = 0;
 		int32_t non_zero_count = 0;
 		int32_t zero_count = 0;
@@ -91,7 +90,6 @@ std::vector<EncodedResult> UimfAcquisitionRecord::process() const
 				{
 					bpi = val;
 					index_max_intensity = non_zero_count + zero_count;
-					bpi_mz = index_max_intensity;
 				}
 
 				encoded_samples.push_back(val);
@@ -107,7 +105,6 @@ std::vector<EncodedResult> UimfAcquisitionRecord::process() const
 			encoded_samples,
 			tic,
 			bpi,
-			bpi_mz,
 			index_max_intensity,
 			timestamp);
 	}
