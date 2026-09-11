@@ -377,7 +377,11 @@ int main(int argc, char *argv[]) {
 					if (command == "info")
 					{
 						auto info = digitizer->get_info();
-auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Digitizer Firmware Version: {} / App: {} / App Version: {}-{} / Fork: {}@{}",
+						//  The full scale is the one configured setting nothing else in the
+						//  protocol reports back, and a file's provenance stamp wants the value
+						//  the card is using rather than the value a config file was last
+						//  edited to say (lab record, task 24).
+						auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Digitizer Firmware Version: {} / App: {} / App Version: {}-{} / Fork: {}@{} / Full Scale: {}",
 							info.instrument_model,
 							info.serial_number,
 							info.firmware_revision,
@@ -385,7 +389,8 @@ auto info_str = std::format("Digitizer Model: {} / Digitizer Serial No.: {} / Di
 							AqMD3_console_VERSION_S,
 							GIT_COMMIT_HASH,
 							FORK_S,
-							GIT_BRANCH);
+							GIT_BRANCH,
+							full_scale_range);
 						req.send_response(info_str);
 					}
 
