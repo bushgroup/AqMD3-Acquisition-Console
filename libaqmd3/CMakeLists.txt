@@ -33,6 +33,11 @@ target_link_libraries(libaqmd3 PRIVATE ${AQMD3_LIBRARY})
 # dependant on the UIMF lib
 target_link_libraries(libaqmd3 PUBLIC i::uimf)
 
+# The marker diagnostics log through the console's default logger. Linked the way the
+# console links it, so that both halves share one spdlog and one registry (lab record, task 83).
+find_package(spdlog CONFIG REQUIRED)
+target_link_libraries(libaqmd3 PRIVATE spdlog::spdlog spdlog::spdlog_header_only)
+
 target_include_directories ( libaqmd3
 	PUBLIC ${PROJECT_SOURCE_DIR}/include
 )

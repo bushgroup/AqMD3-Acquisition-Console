@@ -14,6 +14,7 @@
 #include <libaqmd3/digitizer.h>
 #include <libaqmd3/acquireddata.h>
 #include <libaqmd3/sa220.h>
+#include <libaqmd3/cstzs1context.h>
 
 #include <UIMFWriter/uimfwriter.h>
 
@@ -88,6 +89,7 @@ static double full_scale_range = 0.5;               // volts peak to peak, chann
 static int zero_suppress_threshold = -32667;        // ADC codes, must fit int16_t
 static int zero_suppress_hysteresis = 100;          // ADC codes, must fit uint16_t
 static int control_io_port = 2;                     // 1, 2 or 3; the port carrying In-TriggerEnable
+static int marker_diagnostics = 0;                  // 1 adds the per-fetch marker lines to the log
 
 //  std::stod and std::stoi say "invalid stod argument" and nothing about which line of
 //  config.txt is wrong. These say.
@@ -224,6 +226,10 @@ std::optional<Config> configure_settings()
 		zero_suppress_threshold = config_int(config, "ZeroSuppressThreshold", zero_suppress_threshold);
 		zero_suppress_hysteresis = config_int(config, "ZeroSuppressHysteresis", zero_suppress_hysteresis);
 		control_io_port = config_int(config, "ControlIoPort", control_io_port);
+		marker_diagnostics = config_int(config, "MarkerDiagnostics", marker_diagnostics);
+		if (marker_diagnostics != 0 && marker_diagnostics != 1)
+			throw std::runtime_error("MarkerDiagnostics must be 0 or 1, got " + std::to_string(marker_diagnostics));
+		CstZs1Context::diagnostics = marker_diagnostics == 1;
 
 		if (config.has_key("TriggerSlope"))
 		{
@@ -264,6 +270,7 @@ void print_config(Config& config)
 	print_config_value("ZeroSuppressThreshold", std::to_string(zero_suppress_threshold), config.has_key("ZeroSuppressThreshold"));
 	print_config_value("ZeroSuppressHysteresis", std::to_string(zero_suppress_hysteresis), config.has_key("ZeroSuppressHysteresis"));
 	print_config_value("ControlIoPort", std::to_string(control_io_port), config.has_key("ControlIoPort"));
+	print_config_value("MarkerDiagnostics", std::to_string(marker_diagnostics), config.has_key("MarkerDiagnostics"));
 }
 
 std::map<std::string, spdlog::level::level_enum> get_log_levels_map()
