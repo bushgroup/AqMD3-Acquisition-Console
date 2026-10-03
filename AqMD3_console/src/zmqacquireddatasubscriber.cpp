@@ -37,8 +37,55 @@ void ZmqAcquiredDataSubscriber::publish_error(const std::string& what)
 	publisher->send(message, status_subject, std::chrono::milliseconds(1000));
 }
 
+void ZmqAcquiredDataSubscriber::check_alignment(const UimfFrame& item)
+{
+	// In ZS1 the console sizes each gate from the markers stream alone and hands gate j the
+	// samples-stream elements at the running sum of the earlier gates' sizes; nothing ties the two
+	// streams together again. When the samples stream lags the markers (seen after a replayed
+	// frame), every gate is filled from samples that precede it, and its first stored value is
+	// then baseline rather than the sample that opened it, which is at or above the threshold.
+	// With the streams in step no gate's first value is below the threshold (lab record, task 99).
+	uint64_t gates = 0;
+	uint64_t below = 0;
+	for (const auto& er : item.data())
+	{
+		bool opening = true;
+		for (auto val : er.encoded_spectra)
+		{
+			if (val < 0)
+			{
+				opening = true;
+				continue;
+			}
+			if (opening)
+			{
+				gates++;
+				if (val < first_sample_floor)
+					below++;
+				opening = false;
+			}
+		}
+	}
+	if (below == 0)
+		return;
+	spdlog::error("samples misaligned: {} of {} gates in frame {} open below the threshold",
+		below, gates, item.parameters().frame_number);
+	publish_error("samples misaligned (" + std::to_string(below) + " of " + std::to_string(gates)
+		+ " gates) in frame " + std::to_string(item.parameters().frame_number));
+}
+
 void ZmqAcquiredDataSubscriber::on_notify(std::shared_ptr<UimfFrame>& item)
 {
+	// Before the batch is summed, so a batch the sum refuses is still checked.
+	try
+	{
+		check_alignment(*item);
+	}
+	catch (const std::exception& ex)
+	{
+		spdlog::error("Error checking sample alignment: " + std::string(ex.what()));
+	}
+
 	const EncodedResult* at = nullptr;
 	try
 	{

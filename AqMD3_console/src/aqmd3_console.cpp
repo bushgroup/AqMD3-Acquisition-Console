@@ -555,7 +555,8 @@ int main(int argc, char *argv[]) {
 						std::unique_ptr<AcquirePublisher> p = std::make_unique<AcquirePublisher>(context, acquisition_timeout_ms, buffer_pool, notify_on_scans_count, data_pub);
 						std::shared_ptr<ProcessSubject> ps = std::make_shared<ProcessSubject>(tof_width);
 						std::shared_ptr<UimfFrameWriterSubscriber> fw = std::make_shared<UimfFrameWriterSubscriber>(false);
-						std::shared_ptr<ZmqAcquiredDataSubscriber> zmq = std::make_shared<ZmqAcquiredDataSubscriber>(data_pub, record_size + post_trigger_samples);
+						std::shared_ptr<ZmqAcquiredDataSubscriber> zmq = std::make_shared<ZmqAcquiredDataSubscriber>(data_pub, record_size + post_trigger_samples,
+							zero_suppress_threshold + 32768);
 						ps->Publisher<frame_ptr>::register_subscriber(zmq, SubscriberType::ACQUIRE);
 						ps->Publisher<frame_ptr>::register_subscriber(fw, SubscriberType::ACQUIRE_FRAME);
 						p->register_subscriber(ps, SubscriberType::BOTH);
