@@ -75,6 +75,10 @@ void CstZs1Context::note_trigger(uint64_t timestamp, uint32_t index)
 			spdlog::warn("markers replay: this frame's first trigger, index {} at {}, is not past "
 				"the previous frame's last, index {} at {}",
 				index, timestamp, frame_last_trigger.index, frame_last_trigger.timestamp);
+			// Ended here, before a single element of the samples stream is fetched against these
+			// markers. Fetching samples against a replayed markers stream is what left the samples
+			// stream lagging its markers for the rest of the console process (lab record, task 99).
+			throw FrameDamaged("markers replayed");
 		}
 		else if (diagnostics)
 		{

@@ -87,6 +87,16 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 
 							scans_acquired_count += data.stamps.size();
 						}
+						catch (const FrameDamaged& ex)
+						{
+							// The frame ends here, with its finished, and the acquisition is sound: "error
+							// data:" is a damaged frame to a client, where "error" is a failed one.
+							spdlog::error("Frame {} ended after {} scans: {}", parameters.frame_number,
+								scans_acquired_count, ex.what());
+							publish_status("error data: " + one_line(ex.what()) + " in frame "
+								+ std::to_string(parameters.frame_number), std::chrono::milliseconds(1000));
+							has_errored = true;
+						}
 						catch (const std::exception& ex)
 						{
 							spdlog::error("Error when acquiring UIMF data: " + std::string(ex.what()));

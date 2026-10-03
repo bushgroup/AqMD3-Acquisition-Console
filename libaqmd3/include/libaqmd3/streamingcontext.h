@@ -8,8 +8,18 @@
 #include <chrono>
 #include <string>
 #include <atomic>
+#include <stdexcept>
 
 class Digitizer;
+
+// A frame the context gave up on because its data cannot be trusted, rather than because
+// anything failed: the acquisition is sound and the next frame may be acquired as usual. The
+// console reports it as "error data:", which a client reads as a damaged frame to acquire again,
+// where a bare "error" is a failed one.
+class FrameDamaged : public std::runtime_error {
+public:
+	explicit FrameDamaged(const std::string& what) : std::runtime_error(what) {}
+};
 
 class StreamingContext {
 protected:
