@@ -66,7 +66,16 @@ std::vector<EncodedResult> UimfAcquisitionRecord::process() const
 				gate_zero_count = gate->get_start_sample_index() - prev_gate->get_stop_sample_index();
 			}
 
-			if (gate_zero_count > 0)
+			// UIMF-Library skips a literal 0 that follows a run length of -32768, as a leftover of
+			// an old encoder bug, where every other reader advances a bin on it. A gap of exactly
+			// 32768 followed by a stored zero would be read two ways, so that gap is written as the
+			// two skips -32767, -1 and -32768 is never a run length (lab record, task 103).
+			if (gate_zero_count == 32768)
+			{
+				encoded_samples.push_back(-32767);
+				encoded_samples.push_back(-1);
+			}
+			else if (gate_zero_count > 0)
 			{
 				encoded_samples.push_back(-1 * gate_zero_count);
 			}
