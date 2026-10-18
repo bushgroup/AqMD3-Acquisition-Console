@@ -5,6 +5,10 @@
 #include <iostream>
 #include <spdlog/spdlog.h>
 #include <format>
+#include <typeinfo>
+#ifdef _MSC_VER
+#include <eh.h>
+#endif
 
 // TODO: move to config
 #define FREE_ON_BUFFER_COUNT 5
@@ -12,6 +16,43 @@
 
 namespace
 {
+	// The Release build uses /EHa, so a structured exception (an access violation, say) reaches the
+	// acquire loop's catch (...) with nothing to say what it was. Translated on the acquisition
+	// thread, it carries its code to the std::exception handler instead.
+	class StructuredException : public std::runtime_error {
+	public:
+		explicit StructuredException(unsigned int code)
+			: std::runtime_error(std::format("structured exception 0x{:08x}", code)) {}
+	};
+
+#ifdef _MSC_VER
+	void translate_structured(unsigned int code, struct _EXCEPTION_POINTERS*)
+	{
+		throw StructuredException(code);
+	}
+#endif
+
+	// What a catch (...) caught, for its log line and status message. Called only inside one.
+	std::string describe_unknown()
+	{
+		try
+		{
+			throw;
+		}
+		catch (const std::string& text)
+		{
+			return "a std::string: " + text;
+		}
+		catch (const char* text)
+		{
+			return std::string("a C string: ") + text;
+		}
+		catch (...)
+		{
+			return "a throw of no type it knows";
+		}
+	}
+
 	// A status message is one line by convention, and a driver error is not: the AqMD3 messages
 	// carry an error code and an explanation on separate lines.
 	std::string one_line(const std::string& text)
@@ -54,6 +95,9 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 				bool has_errored = false;
 
 				state = State::ACQUIRING;
+#ifdef _MSC_VER
+				_set_se_translator(translate_structured);
+#endif
 
 				if (digitizer->get_is_acquiring())
 				{
@@ -89,8 +133,9 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 						}
 						catch (const FrameDamaged& ex)
 						{
-							// The frame ends here, with its finished, and the acquisition is sound: "error
-							// data:" is a damaged frame to a client, where "error" is a failed one.
+							// The frame ends here, with its finished: "error data:" is a damaged frame to
+							// a client, where "error" is a failed one. The process is not sound after it
+							// (see FrameDamaged), so a client restarts the console before acquiring again.
 							spdlog::error("Frame {} ended after {} scans: {}", parameters.frame_number,
 								scans_acquired_count, ex.what());
 							publish_status("error data: " + one_line(ex.what()) + " in frame "
@@ -99,7 +144,8 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 						}
 						catch (const std::exception& ex)
 						{
-							spdlog::error("Error when acquiring UIMF data: " + std::string(ex.what()));
+							spdlog::error("Error when acquiring UIMF data: {} ({}; driver error {})", ex.what(),
+								typeid(ex).name(), digitizer->driver_error());
 							// Logged is not the same as reported. Without this a client sees a frame that ended
 							// with fewer scans than it asked for, or none at all, and cannot tell that from a
 							// frame in which nothing was above the threshold. The timeout is short and finite so
@@ -109,8 +155,13 @@ void AcquirePublisher::start(UimfFrameParameters parameters)
 						}
 						catch (...)
 						{
-							spdlog::error("Unknown error when acquiring UIMF data");
-							publish_status("error unknown error when acquiring UIMF data",
+							// Only a throw of something other than a std::exception lands here now; the
+							// one the acquire path had, a std::string in CstZs1Context, is a
+							// runtime_error since 1.5.0 (lab record, tasks 83 and 105).
+							std::string what = describe_unknown();
+							spdlog::error("Unknown error when acquiring UIMF data: {} (driver error {})", what,
+								digitizer->driver_error());
+							publish_status("error unknown error when acquiring UIMF data: " + one_line(what),
 								std::chrono::milliseconds(1000));
 							has_errored = true;
 						}

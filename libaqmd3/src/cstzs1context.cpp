@@ -13,6 +13,7 @@ using std::cerr;
 #include <stdexcept>
 #include <sstream>
 #include <iomanip>
+#include <format>
 #include <spdlog/spdlog.h>
 
 #define variable_m_t_a
@@ -120,6 +121,22 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 	uint64_t to_acquire = 0;
 	std::vector<AcquiredData::TriggerData> stamps;
 
+	// Gates walked before this acquire's first trigger, which have no trigger to belong to. A
+	// markers stream in step never has one (no transcript to 2026-10-17 logs one outside the
+	// fault below); after a replay stop every later acquire on 1.4.x began on one (lab record,
+	// task 83). They are skipped and reported once, with the first hunk and their sample count,
+	// and their samples are not fetched.
+	uint64_t orphan_gates = 0;
+	uint64_t orphan_elements = 0;
+	int orphan_at = 0;
+	std::array<int32_t, 16> orphan_hunk{};
+	bool orphans_reported = false;
+	auto orphans = [&]() {
+		return std::format("{} gates before this acquire's first trigger, {} sample elements, the "
+			"first at element {} in hunk {}", orphan_gates, orphan_elements, orphan_at,
+			hunk_hex(orphan_hunk.data()));
+	};
+
 	std::shared_ptr<AcquisitionBuffer> samples_buffer = buffer_pool->get_buffer();
 
 	ViInt64 first_element_markers;
@@ -150,6 +167,12 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 				++trig_count;
 				if (trig_count >= triggers_to_read + 1)
 					goto process;
+
+				if (orphan_gates && !orphans_reported)
+				{
+					orphans_reported = true;
+					spdlog::warn("markers: {}, skipped", orphans());
+				}
 
 				uint64_t low = seg[1];
 				uint64_t high = seg[2];
@@ -197,9 +220,21 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 
 						if (stamps.size() == 0)
 						{
-							std::cerr << "\tNo elements in stamps - discarding acquired elements." << std::endl;
-							markers_buffer.advance_processed(16);
-							break;
+							// Upstream advanced past the hunk here and broke out to the advance below,
+							// which moved on a second time: 32 elements per orphan hunk. Where trigger
+							// and gate hunks alternate, that steps over every trigger hunk, walks off
+							// the end of the fetch into stale buffer, and ends on a header thrown as a
+							// std::string: the "unknown error" of every acquire after a replay stop on
+							// 1.4.x, after exactly 250 orphan lines in its 500-hunk fetch (lab record,
+							// task 83). The hunk is now passed over once, by the advance below.
+							if (orphan_gates == 0)
+							{
+								orphan_at = markers_buffer.get_processed();
+								std::copy(seg, seg + 16, orphan_hunk.begin());
+							}
+							++orphan_gates;
+							orphan_elements += to_acquire_memory_blocks_f;
+							continue;
 						}
 
 						{
@@ -241,7 +276,12 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 				throw std::runtime_error("dummy gate error");
 			}
 			default:
-				throw std::string("unexpected header -> (default) header: " + std::to_string(header & 0x000000FF));
+				// Upstream threw a std::string, which only a catch (...) can catch, and the console
+				// then said no more than "unknown error".
+				throw std::runtime_error(std::format("markers: unexpected header 0x{:02x} at element {} of "
+					"{} fetched, trigger {} of this acquire, hunk {}{}", header & 0x000000FF,
+					markers_buffer.get_processed(), markers_buffer.get_acquired(), trig_count, hunk_hex(seg),
+					orphan_gates ? "; " + orphans() : std::string()));
 			}
 		}
 
@@ -289,6 +329,8 @@ AcquiredData CstZs1Context::acquire(uint64_t triggers_to_read, std::chrono::mill
 					<< "\tavailable_elements_markers: " << std::to_string(available_elements_markers) << "\n" \
 					<< "\tactual_elements_markers: " << std::to_string(actual_elements_markers) << "\n\n" \
 					<< "\ttrig_count: " << std::to_string(trig_count) << "\n";
+					if (orphan_gates)
+						timeout_conditions << "\t" << orphans() << "\n";
 
 					throw std::runtime_error("timeout in acquisition.\n" + timeout_conditions.str());
 				}

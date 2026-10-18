@@ -12,10 +12,12 @@
 
 class Digitizer;
 
-// A frame the context gave up on because its data cannot be trusted, rather than because
-// anything failed: the acquisition is sound and the next frame may be acquired as usual. The
-// console reports it as "error data:", which a client reads as a damaged frame to acquire again,
-// where a bare "error" is a failed one.
+// A frame the context gave up on because its data cannot be trusted, rather than because a call
+// failed. The console reports it as "error data:", which a client reads as a damaged frame to
+// acquire again, where a bare "error" is a failed one. The process is not sound after one: on
+// 1.4.x every later frame failed until the console was restarted, and the samples stream read out
+// of step even after a new chain (lab record, tasks 99, 105), so a client restarts the console
+// before acquiring again.
 class FrameDamaged : public std::runtime_error {
 public:
 	explicit FrameDamaged(const std::string& what) : std::runtime_error(what) {}
@@ -42,6 +44,10 @@ public:
 	virtual void stop();
 
 	bool get_is_acquiring();
+
+	// The driver's pending error, code and message, or "none"; for a report, since reading it
+	// clears it.
+	std::string driver_error() const;
 };
 
 #endif // !STREAMING_CONTEXT_H

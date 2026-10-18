@@ -24,3 +24,14 @@ bool StreamingContext::get_is_acquiring()
 	return status == AQMD3_VAL_ACQUISITION_STATUS_RESULT_TRUE;
 }
 
+std::string StreamingContext::driver_error() const
+{
+	ViStatus code = 0;
+	ViChar message[512] = {};
+	if (AqMD3_GetError(VI_NULL, &code, sizeof(message), message) < 0)
+		return "unreadable";
+	if (code == 0)
+		return "none";
+	return "code " + std::to_string(code) + ", " + message;
+}
+
